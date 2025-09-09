@@ -1,0 +1,17 @@
+# Gradle 관련
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE 관련 (주로 IntelliJ)
+.idea/
+.vscode/
+*.iml
+
+# 기타 운영체제 및 환경 파일
+.env
+.DS_Store
+*.log
+
+# 컴파일된 파일
+*.class
