@@ -1,7 +1,9 @@
 package poker;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import poker.agent.ActionDecision;
 import poker.agent.AgentPlayer;
@@ -17,6 +19,7 @@ import poker.core.Deck;
 import poker.core.GameLogger;
 import poker.core.IDeck;
 import poker.core.Ranking;
+import poker.core.RankingUtil;
 
 /**
  * 완전한 텍사스 홀덤 게임을 구현하는 클래스
@@ -38,6 +41,12 @@ public class HoldemGame {
     private int smallBlindPosition;
     private int bigBlindPosition;
     private int currentPlayer;
+    
+    // 통계 수집용 변수들
+    private Map<String, Integer> rankingCounts = new HashMap<>();
+    private Map<String, Integer> winnerCounts = new HashMap<>();
+    private int totalHandsPlayed = 0;
+    private int totalShowdowns = 0;
     
     public HoldemGame() {
         initializeGame();
@@ -118,6 +127,7 @@ public class HoldemGame {
     }
     
     public void playHand() {
+        totalHandsPlayed++;
         logger.log("새로운 핸드 시작 - 딜러: " + getPlayerName(dealerPosition));
         
         // 1. 블라인드 포스팅
@@ -164,8 +174,13 @@ public class HoldemGame {
         playBettingRound("리버");
         
         // 7. 쇼다운
+        logger.log("리버 베팅 라운드 종료 - 쇼다운 확인 중...");
+        logger.log("isHandOver(): " + isHandOver());
         if (!isHandOver()) {
+            logger.log("쇼다운을 시작합니다.");
             showDown();
+        } else {
+            logger.log("핸드가 종료되어 쇼다운을 건너뜁니다.");
         }
         
         // 8. 포트 분배 및 정리
@@ -300,62 +315,98 @@ public class HoldemGame {
     }
     
     private void showDown() {
-        // 활성 플레이어들의 핸드 평가
-        List<AgentPlayer> activePlayers = new ArrayList<>();
-        for (AgentPlayer player : players) {
-            if (player.isActive()) {
-                activePlayers.add(player);
+        // 활성 플레이어들 중 폴드하지 않은 플레이어들의 핸드 평가
+        List<AgentPlayer> showdownPlayers = new ArrayList<>();
+        for (int i = 0; i < NUM_PLAYERS; i++) {
+            if (players[i].isActive() && !bettingState.getFolded()[i]) {
+                showdownPlayers.add(players[i]);
             }
         }
         
-        if (activePlayers.size() <= 1) {
+        if (showdownPlayers.size() <= 1) {
             logger.log("쇼다운할 플레이어가 없습니다.");
             return;
         }
         
         // 각 플레이어의 핸드 평가
-        for (AgentPlayer player : activePlayers) {
-            // 간단한 핸드 평가 (실제로는 더 정교한 로직 필요)
-            double handStrength = HandEvaluator.evaluateHandStrength(player.getCards(), communityCards);
-            Ranking ranking = getRankingFromStrength(handStrength);
-            player.setRankingEnum(ranking);
+        totalShowdowns++;
+        logger.log("=== 쇼다운 시작 ===");
+        logger.log("커뮤니티 카드: " + communityCards.toString());
+        
+        for (AgentPlayer player : showdownPlayers) {
+            int playerIndex = getPlayerIndex(player);
+            String playerName = getPlayerName(playerIndex);
             
-            logger.logShowdown(getPlayerName(getPlayerIndex(player)), 
+            logger.log("--- " + playerName + " 핸드 평가 ---");
+            logger.log("홀카드: " + player.getCards()[0] + " " + player.getCards()[1]);
+            
+            // RankingUtil을 사용하여 정확한 핸드 평가
+            RankingUtil.checkRanking(player, communityCards);
+            Ranking ranking = player.getRankingEnum();
+            
+            // 통계 수집
+            String rankingName = ranking.toString();
+            rankingCounts.put(rankingName, rankingCounts.getOrDefault(rankingName, 0) + 1);
+            
+            // HandEvaluator로 강도도 계산 (로깅용)
+            double handStrength = HandEvaluator.evaluateHandStrength(player.getCards(), communityCards);
+            
+            logger.log(playerName + " 최종 랭킹: " + ranking.toString() + " (ordinal: " + ranking.ordinal() + ")");
+            logger.log(playerName + " 핸드 강도: " + String.format("%.2f", handStrength));
+            
+            if (player.getRankingList() != null && !player.getRankingList().isEmpty()) {
+                logger.log(playerName + " 랭킹 카드들: " + player.getRankingList().toString());
+            }
+            
+            logger.logShowdown(playerName, 
                 player.getCards()[0] + " " + player.getCards()[1], 
                 ranking.toString(), handStrength);
         }
         
         // 승자 결정
-        AgentPlayer winner = determineWinner(activePlayers);
+        logger.log("=== 승자 결정 과정 ===");
+        AgentPlayer winner = determineWinner(showdownPlayers);
         if (winner != null) {
-            logger.logWinner(getPlayerName(getPlayerIndex(winner)), winner.getRankingEnum().toString());
+            String winnerName = getPlayerName(getPlayerIndex(winner));
+            logger.logWinner(winnerName, winner.getRankingEnum().toString());
+            
+            // 승자 통계 수집
+            winnerCounts.put(winnerName, winnerCounts.getOrDefault(winnerName, 0) + 1);
         }
+        logger.log("=== 쇼다운 종료 ===");
     }
     
-    private Ranking getRankingFromStrength(double handStrength) {
-        if (handStrength >= 0.9) return Ranking.ROYAL_FLUSH;
-        if (handStrength >= 0.8) return Ranking.STRAIGHT_FLUSH;
-        if (handStrength >= 0.7) return Ranking.FOUR_OF_A_KIND;
-        if (handStrength >= 0.6) return Ranking.FULL_HOUSE;
-        if (handStrength >= 0.5) return Ranking.FLUSH;
-        if (handStrength >= 0.4) return Ranking.STRAIGHT;
-        if (handStrength >= 0.3) return Ranking.THREE_OF_A_KIND;
-        if (handStrength >= 0.2) return Ranking.TWO_PAIR;
-        if (handStrength >= 0.1) return Ranking.ONE_PAIR;
-        return Ranking.HIGH_CARD;
-    }
     
     private AgentPlayer determineWinner(List<AgentPlayer> activePlayers) {
         if (activePlayers.isEmpty()) return null;
         if (activePlayers.size() == 1) return activePlayers.get(0);
         
-        // 간단한 승자 결정 (실제로는 더 복잡한 로직 필요)
+        logger.log("승자 비교 시작 - " + activePlayers.size() + "명의 플레이어");
+        
+        // Ranking enum에서 낮은 ordinal 값이 더 높은 랭킹을 의미
         AgentPlayer winner = activePlayers.get(0);
-        for (AgentPlayer player : activePlayers) {
-            if (player.getRankingEnum().ordinal() > winner.getRankingEnum().ordinal()) {
+        String winnerName = getPlayerName(getPlayerIndex(winner));
+        logger.log("초기 승자: " + winnerName + " (" + winner.getRankingEnum().toString() + ", ordinal: " + winner.getRankingEnum().ordinal() + ")");
+        
+        for (int i = 1; i < activePlayers.size(); i++) {
+            AgentPlayer player = activePlayers.get(i);
+            String playerName = getPlayerName(getPlayerIndex(player));
+            Ranking playerRanking = player.getRankingEnum();
+            Ranking winnerRanking = winner.getRankingEnum();
+            
+            logger.log("비교: " + playerName + " (" + playerRanking.toString() + ", ordinal: " + playerRanking.ordinal() + 
+                      ") vs " + winnerName + " (" + winnerRanking.toString() + ", ordinal: " + winnerRanking.ordinal() + ")");
+            
+            if (playerRanking.ordinal() < winnerRanking.ordinal()) {
                 winner = player;
+                winnerName = playerName;
+                logger.log("새로운 승자: " + winnerName + " (" + playerRanking.toString() + ")");
+            } else {
+                logger.log("현재 승자 유지: " + winnerName + " (" + winnerRanking.toString() + ")");
             }
         }
+        
+        logger.log("최종 승자: " + winnerName + " (" + winner.getRankingEnum().toString() + ")");
         return winner;
     }
     
@@ -363,14 +414,36 @@ public class HoldemGame {
         int potSize = bettingState.getPotSize();
         if (potSize == 0) return;
         
-        // 폴드하지 않은 플레이어 중 첫 번째에게 팟 지급
-        boolean[] folded = bettingState.getFolded();
+        // 활성 플레이어들 중에서 승자 찾기
+        List<AgentPlayer> activePlayers = new ArrayList<>();
         for (int i = 0; i < NUM_PLAYERS; i++) {
-            if (!folded[i] && players[i].isActive()) {
-                bettingState.addToStack(i, potSize);
-                players[i].setStack(bettingState.getPlayerStacks()[i]);
-                logger.logPotDistribution(potSize, getPlayerName(i));
-                break;
+            if (players[i].isActive() && !bettingState.getFolded()[i]) {
+                activePlayers.add(players[i]);
+            }
+        }
+        
+        if (activePlayers.isEmpty()) {
+            logger.log("활성 플레이어가 없어 팟을 분배할 수 없습니다.");
+            return;
+        }
+        
+        if (activePlayers.size() == 1) {
+            // 한 명만 남은 경우
+            AgentPlayer winner = activePlayers.get(0);
+            int winnerIndex = getPlayerIndex(winner);
+            bettingState.addToStack(winnerIndex, potSize);
+            players[winnerIndex].setStack(bettingState.getPlayerStacks()[winnerIndex]);
+            logger.logPotDistribution(potSize, getPlayerName(winnerIndex));
+        } else {
+            // 여러 명이 남은 경우 쇼다운으로 승자 결정
+            AgentPlayer winner = determineWinner(activePlayers);
+            if (winner != null) {
+                int winnerIndex = getPlayerIndex(winner);
+                bettingState.addToStack(winnerIndex, potSize);
+                players[winnerIndex].setStack(bettingState.getPlayerStacks()[winnerIndex]);
+                logger.logPotDistribution(potSize, getPlayerName(winnerIndex));
+            } else {
+                logger.log("승자를 결정할 수 없어 팟을 분배할 수 없습니다.");
             }
         }
     }
@@ -415,12 +488,19 @@ public class HoldemGame {
     private boolean isHandOver() {
         boolean[] folded = bettingState.getFolded();
         int activePlayers = 0;
+        logger.log("=== isHandOver() 체크 ===");
         for (int i = 0; i < NUM_PLAYERS; i++) {
+            boolean isFolded = folded[i];
+            boolean isActive = players[i].isActive();
+            logger.log("P" + (i+1) + ": folded=" + isFolded + ", active=" + isActive);
             if (!folded[i] && players[i].isActive()) {
                 activePlayers++;
             }
         }
-        return activePlayers <= 1;
+        logger.log("활성 플레이어 수: " + activePlayers);
+        boolean handOver = activePlayers <= 1;
+        logger.log("핸드 종료 여부: " + handOver);
+        return handOver;
     }
     
     /**
@@ -476,6 +556,14 @@ public class HoldemGame {
     }
     
     public void playMultipleHands(int numHands) {
+        if (numHands < 0) {
+            throw new IllegalArgumentException("핸드 수는 음수일 수 없습니다: " + numHands);
+        }
+        if (numHands == 0) {
+            logger.log("0핸드 게임 - 게임을 종료합니다.");
+            return;
+        }
+        
         logger.log(String.format("%d핸드 홀덤 게임 시작 - 플레이어: %d명, 초기 스택: %d칩, 블라인드: %d/%d", 
             numHands, NUM_PLAYERS, INITIAL_STACK, SMALL_BLIND, BIG_BLIND));
         
@@ -502,6 +590,51 @@ public class HoldemGame {
         
         // 로그 파일 닫기
         logger.logGameEnd();
+        
+        // 게임 통계 출력
+        printGameStatistics();
+    }
+    
+    /**
+     * 게임 통계를 출력하는 메서드
+     */
+    public void printGameStatistics() {
+        logger.log("📊 게임 통계");
+        logger.log("총 핸드 수: " + totalHandsPlayed);
+        logger.log("총 쇼다운 수: " + totalShowdowns);
+        
+        if (!rankingCounts.isEmpty()) {
+            logger.log("📈 랭킹 통계:");
+            rankingCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .forEach(entry -> logger.log("  " + entry.getKey() + ": " + entry.getValue() + "회"));
+        }
+        
+        if (!winnerCounts.isEmpty()) {
+            logger.log("🏆 승자 통계:");
+            winnerCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .forEach(entry -> logger.log("  " + entry.getKey() + ": " + entry.getValue() + "승"));
+        }
+    }
+    
+    /**
+     * 통계 데이터를 가져오는 메서드들
+     */
+    public Map<String, Integer> getRankingCounts() {
+        return new HashMap<>(rankingCounts);
+    }
+    
+    public Map<String, Integer> getWinnerCounts() {
+        return new HashMap<>(winnerCounts);
+    }
+    
+    public int getTotalHandsPlayed() {
+        return totalHandsPlayed;
+    }
+    
+    public int getTotalShowdowns() {
+        return totalShowdowns;
     }
     
     private void printFinalResults() {

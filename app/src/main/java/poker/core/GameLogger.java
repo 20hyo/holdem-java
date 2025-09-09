@@ -14,9 +14,11 @@ public class GameLogger {
     
     private FileWriter writer;
     private boolean isEnabled;
+    private boolean isClosed;
     
     public GameLogger() {
         this.isEnabled = true;
+        this.isClosed = false;
         try {
             this.writer = new FileWriter(LOG_FILE, true); // append mode
             log("=== 홀덤 게임 시작 ===");
@@ -27,7 +29,7 @@ public class GameLogger {
     }
     
     public void log(String message) {
-        if (!isEnabled) return;
+        if (!isEnabled || isClosed || writer == null) return;
         
         try {
             String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMAT);
@@ -35,7 +37,11 @@ public class GameLogger {
             writer.write(logEntry);
             writer.flush();
         } catch (IOException e) {
-            System.err.println("로그 기록 실패: " + e.getMessage());
+            // 로그 기록 실패 시 조용히 처리 (무한 루프 방지)
+            if (!isClosed) {
+                System.err.println("로그 기록 실패: " + e.getMessage());
+                isEnabled = false; // 추가 로그 시도 방지
+            }
         }
     }
     
@@ -82,12 +88,17 @@ public class GameLogger {
     }
     
     public void close() {
-        if (writer != null) {
+        if (writer != null && !isClosed) {
             try {
                 writer.close();
+                isClosed = true;
+                isEnabled = false; // 추가 로그 시도 방지
             } catch (IOException e) {
                 System.err.println("로그 파일 닫기 실패: " + e.getMessage());
+            } finally {
+                writer = null; // 참조 제거
             }
         }
     }
+    
 }

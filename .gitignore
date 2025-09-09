@@ -12,6 +12,7 @@ build/
 .env
 .DS_Store
 *.log
+logs/
 
 # 컴파일된 파일
 *.class
